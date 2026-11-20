@@ -1023,6 +1023,9 @@ impl ChatRunner {
             outcome,
         );
 
+        // Gemini's OpenAI-compatible endpoint streams a complete tool call and then
+        // reports finish_reason "stop", so a fully named call counts on its own.
+        finish_is_tool_calls |= !tc_id.is_empty() && !tc_name.is_empty();
         let tool_call = if finish_is_tool_calls && !tc_id.is_empty() && !tc_name.is_empty() {
             Some(ToolCall { id: tc_id, name: tc_name, arguments: tc_args })
         } else {
