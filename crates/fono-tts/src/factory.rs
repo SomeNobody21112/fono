@@ -82,7 +82,7 @@ fn maybe_wrap_english_only(
         let base_url = (!cfg.local.base_url.is_empty()).then(|| cfg.local.base_url.clone());
         Arc::new(crate::english_only_fallback::EnglishOnlyFallback::new(
             primary, voices_dir, base_url, languages,
-        ))
+        ).with_voice(&cfg.local.voice))
     } else {
         primary
     }

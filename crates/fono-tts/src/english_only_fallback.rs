@@ -55,6 +55,9 @@ pub struct EnglishOnlyFallback {
     local: Mutex<HashMap<String, Option<Arc<dyn TextToSpeech>>>>,
     /// Emit the "fallback unavailable" warning at most once per process.
     warned: AtomicBool,
+    /// `[tts.local].voice`: used for its own language instead of the
+    /// catalogue's first voice, so the fallback keeps the persona's voice.
+    preferred_voice: Option<String>,
 }
 
 impl EnglishOnlyFallback {
@@ -81,7 +84,15 @@ impl EnglishOnlyFallback {
             langs,
             local: Mutex::new(HashMap::new()),
             warned: AtomicBool::new(false),
+            preferred_voice: None,
         }
+    }
+
+    /// Prefer this catalogue voice (by name) for its language.
+    #[must_use]
+    pub fn with_voice(mut self, name: &str) -> Self {
+        self.preferred_voice = (!name.trim().is_empty()).then(|| name.trim().to_owned());
+        self
     }
 
     /// The base language to route locally, or `None` to use the cloud
@@ -104,7 +115,7 @@ impl EnglishOnlyFallback {
         if let Some(slot) = cache.get(base) {
             return slot.clone();
         }
-        let engine = build_local_engine(base, &self.voices_dir, self.base_url.as_deref()).await;
+        let engine = build_local_engine(base, &self.voices_dir, self.base_url.as_deref(), self.preferred_voice.as_deref()).await;
         cache.insert(base.to_string(), engine.clone());
         engine
     }
@@ -132,8 +143,13 @@ async fn build_local_engine(
     base: &str,
     voices_dir: &std::path::Path,
     base_url: Option<&str>,
+    preferred: Option<&str>,
 ) -> Option<Arc<dyn TextToSpeech>> {
-    let voice = match crate::voices::for_language(base) {
+    let chosen = match preferred.map(crate::voices::by_name) {
+        Some(Ok(Some(v))) if v.language == base => Ok(Some(v)),
+        _ => crate::voices::for_language(base),
+    };
+    let voice = match chosen {
         Ok(Some(v)) => v,
         Ok(None) => {
             tracing::warn!(
