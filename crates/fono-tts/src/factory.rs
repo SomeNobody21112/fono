@@ -453,7 +453,7 @@ fn build_gemini(cfg: &Tts, secrets: &Secrets) -> Result<Arc<dyn TextToSpeech>> {
     let (key_ref, model_override, voice_override) = resolve_cloud(cfg, &TtsBackend::Gemini);
     let key = resolve_key(&key_ref, &TtsBackend::Gemini, secrets)?;
     let voice = resolve_voice(cfg, voice_override);
-    Ok(Arc::new(crate::gemini::GeminiTts::new(key, model_override, voice)))
+    Ok(Arc::new(crate::gemini::GeminiTts::new(key, model_override, voice).with_style(cfg.style.clone())))
 }
 
 #[cfg(not(feature = "gemini"))]

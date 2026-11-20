@@ -47,6 +47,8 @@ pub struct GeminiTts {
     api_key: String,
     model: String,
     voice: String,
+    /// Delivery instruction prepended to every line (`[tts] style`).
+    style: String,
     client: reqwest::Client,
 }
 
@@ -67,7 +69,20 @@ impl GeminiTts {
         let voice = voice_override
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| entry.default_voice.to_string());
-        Self { api_key: api_key.into(), model, voice, client: crate::openai_compat::warm_client() }
+        Self {
+            api_key: api_key.into(),
+            model,
+            voice,
+            style: String::new(),
+            client: crate::openai_compat::warm_client(),
+        }
+    }
+
+    /// Set the delivery instruction (`[tts] style`); empty disables it.
+    #[must_use]
+    pub fn with_style(mut self, style: impl Into<String>) -> Self {
+        self.style = style.into().trim().to_string();
+        self
     }
 
     /// Configured model id. Exposed for tests.
@@ -98,6 +113,14 @@ impl GeminiTts {
     /// Exposed for tests.
     #[must_use]
     pub fn build_request_body(&self, text: &str, voice: &str) -> serde_json::Value {
+        // Gemini TTS treats a leading "<instruction>: " as direction, not script.
+        let styled;
+        let text = if self.style.is_empty() {
+            text
+        } else {
+            styled = format!("{}: {text}", self.style);
+            styled.as_str()
+        };
         let req = GenerateRequest {
             contents: vec![Content { parts: vec![Part { text }] }],
             generation_config: GenerationConfig {
@@ -473,6 +496,17 @@ mod tests {
         let entry = provider_catalog::find("gemini").and_then(|p| p.tts.as_ref()).unwrap();
         assert_eq!(c.model(), entry.model);
         assert_eq!(c.voice(), entry.default_voice);
+    }
+
+    #[test]
+    fn style_is_prepended_only_when_set() {
+        let plain = GeminiTts::new("k", None, None);
+        assert_eq!(plain.build_request_body("Very good, sir.", "Charon")["contents"][0]["parts"][0]["text"], "Very good, sir.");
+        let styled = GeminiTts::new("k", None, None).with_style("  As a refined English butler ");
+        assert_eq!(
+            styled.build_request_body("Very good, sir.", "Charon")["contents"][0]["parts"][0]["text"],
+            "As a refined English butler: Very good, sir."
+        );
     }
 
     #[test]

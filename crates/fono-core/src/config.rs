@@ -634,6 +634,11 @@ pub struct Tts {
     /// like `en_US-amy-low`; OpenAI voices are `alloy`/`echo`/etc.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub voice: String,
+    /// Delivery instruction for prompt-steerable voices (Gemini only today),
+    /// sent ahead of every line, e.g. `As a refined English butler`. The
+    /// model follows it without speaking it. Empty = none.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub style: String,
     /// cpal output device name. Empty = system default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub output_device: String,
@@ -661,6 +666,7 @@ impl Default for Tts {
         Self {
             backend: TtsBackend::None,
             voice: String::new(),
+            style: String::new(),
             output_device: String::new(),
             cloud: None,
             wyoming: None,
