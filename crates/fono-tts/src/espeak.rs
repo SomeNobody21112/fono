@@ -66,7 +66,7 @@ pub fn install_core(data_dir: &Path) -> Result<()> {
 ///
 /// - `nb` → `no` and `zh` → `cmn`: espeak language aliases (the voice-alias
 ///   names live only in the stripped `lang/` dir; the real tables are `no`/`cmn`).
-/// - `en-us` / `en-gb-x-rp` → `en` and `es-419` → `es`: regional/extended
+/// - `en-us` / `en-gb` / `en-gb-x-rp` → `en` and `es-419` → `es`: regional/extended
 ///   variants with no standalone phoneme table; the base table (and the shared
 ///   `en_dict` / `es_dict`) is the correct fallback.
 ///
@@ -78,7 +78,7 @@ pub fn canonical_lang(code: &str) -> &str {
     match code {
         "nb" => "no",
         "zh" => "cmn",
-        "en-us" | "en-gb-x-rp" => "en",
+        "en-us" | "en-gb" | "en-gb-x-rp" => "en",
         "es-419" => "es",
         other => other,
     }
@@ -128,6 +128,8 @@ mod tests {
         // en_US-amy-medium's .onnx.json declares espeak voice "en-us"; it must
         // fold onto the shared "en" base/dict, not pass through (no en-us dict).
         assert_eq!(canonical_lang("en-us"), "en");
+        // Kokoro's British voices (bf_*/bm_*) declare "en-gb"; there is no en-gb dict.
+        assert_eq!(canonical_lang("en-gb"), "en");
         assert_eq!(canonical_lang("es-419"), "es");
         // Unmapped codes (incl. variants espeak resolves itself) pass through.
         assert_eq!(canonical_lang("ro"), "ro");
