@@ -2028,6 +2028,14 @@ async fn handle_client(
             // the *second* F7 would be the one that actually starts
             // a new recording — the user-visible "F7 twice" bug.
             send_translated(HotkeyAction::CancelPressed);
+            // `fono assistant press` starts a capture without moving the FSM
+            // out of Idle, so the FSM route above never reaches it: the slot
+            // stayed occupied and every later wake word logged "assistant
+            // capture already in progress". Stopping the assistant directly
+            // is idempotent and clears that orphaned capture too.
+            if let Some(o) = orchestrator.as_ref() {
+                o.on_assistant_stop().await;
+            }
             Response::Ok
         }
         Request::McpActivityStart { phase } => {
