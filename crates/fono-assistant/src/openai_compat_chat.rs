@@ -47,6 +47,25 @@ use futures::stream::{BoxStream, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use crate::history::{ChatRole, ChatTurn, ToolCall};
+
+/// Gemini attaches an opaque `extra_content` (its `thought_signature`) to each
+/// tool call and rejects the follow-up request with a 400 unless the same call
+/// is sent back carrying it. `ToolCall` is shared by every backend, so the
+/// signatures are kept here, keyed by call id, and re-attached on the wire.
+static TOOL_CALL_EXTRA: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, serde_json::Value>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn remember_extra(id: &str, extra: serde_json::Value) {
+    let mut m = TOOL_CALL_EXTRA.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if m.len() > 256 {
+        m.clear(); // shortcut: drops signatures of very old turns; they have aged out of history anyway
+    }
+    m.insert(id.to_owned(), extra);
+}
+
+fn extra_for(id: &str) -> Option<serde_json::Value> {
+    TOOL_CALL_EXTRA.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(id).cloned()
+}
 use crate::sse::SseBuffer;
 use crate::traits::{Assistant, AssistantContext, TokenDelta, ToolEvent};
 
@@ -258,6 +277,8 @@ struct WireToolCall {
     #[serde(rename = "type")]
     kind: &'static str,
     function: WireToolFunction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_content: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -294,6 +315,8 @@ struct ChunkDelta {
 struct ToolCallDelta {
     #[serde(default)]
     id: Option<String>,
+    #[serde(default)]
+    extra_content: Option<serde_json::Value>,
     #[serde(default)]
     function: Option<ToolFunctionDelta>,
 }
@@ -368,6 +391,7 @@ fn turn_to_wire(turn: &ChatTurn) -> WireMessage {
                         name: c.name.clone(),
                         arguments: c.arguments.clone(),
                     },
+                    extra_content: extra_for(&c.id),
                 })
                 .collect();
             WireMessage { role: "assistant", content, tool_calls, tool_call_id: None }
@@ -419,6 +443,7 @@ fn append_tool_result(messages: &mut Vec<WireMessage>, call: &ToolCall, summary:
                 name: call.name.clone(),
                 arguments: call.arguments.clone(),
             },
+            extra_content: extra_for(&call.id),
         }],
         tool_call_id: None,
     });
@@ -914,6 +939,7 @@ impl ChatRunner {
         let mut tc_id = String::new();
         let mut tc_name = String::new();
         let mut tc_args = String::new();
+        let mut tc_extra: Option<serde_json::Value> = None;
         let mut finish_is_tool_calls = false;
         // Set when any finish_reason fires inside a choice; checked
         // after the per-choice loop so we don't break mid-iteration.
@@ -985,6 +1011,9 @@ impl ChatRunner {
                             if let Some(id) = tc.id {
                                 tc_id = id;
                             }
+                            if tc.extra_content.is_some() {
+                                tc_extra = tc.extra_content;
+                            }
                             if let Some(func) = tc.function {
                                 if let Some(name) = func.name {
                                     tc_name = name;
@@ -1027,6 +1056,9 @@ impl ChatRunner {
         // reports finish_reason "stop", so a fully named call counts on its own.
         finish_is_tool_calls |= !tc_id.is_empty() && !tc_name.is_empty();
         let tool_call = if finish_is_tool_calls && !tc_id.is_empty() && !tc_name.is_empty() {
+            if let Some(extra) = tc_extra {
+                remember_extra(&tc_id, extra);
+            }
             Some(ToolCall { id: tc_id, name: tc_name, arguments: tc_args })
         } else {
             None
@@ -1129,6 +1161,21 @@ mod tests {
         assert!(body.contains("\"system\""));
         assert!(body.contains("\"what now?\""));
         assert!(!body.contains("\"tools\""));
+    }
+
+    #[test]
+    fn gemini_thought_signature_round_trips_on_the_tool_call() {
+        let call = ToolCall { id: "call_sig_test".into(), name: "media".into(), arguments: "{}".into() };
+        remember_extra(&call.id, serde_json::json!({"google": {"thought_signature": "abc"}}));
+        let mut msgs = Vec::new();
+        append_tool_result(&mut msgs, &call, "Paused.");
+        let body = serde_json::to_string(&msgs).unwrap();
+        assert!(body.contains(r#""extra_content":{"google":{"thought_signature":"abc"}}"#), "{body}");
+        // A call with no signature (every other backend) sends no extra field.
+        let plain = ToolCall { id: "call_plain".into(), name: "media".into(), arguments: "{}".into() };
+        let mut msgs = Vec::new();
+        append_tool_result(&mut msgs, &plain, "Paused.");
+        assert!(!serde_json::to_string(&msgs).unwrap().contains("extra_content"));
     }
 
     #[test]
