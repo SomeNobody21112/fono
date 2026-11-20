@@ -193,7 +193,21 @@ impl TextToSpeech for EnglishOnlyFallback {
         }
         let Some(base) = self.route_language(text, lang) else {
             // English or inconclusive — the cloud backend handles it.
-            return self.primary.synthesize(text, voice, lang).await;
+            let err = match self.primary.synthesize(text, voice, lang).await {
+                Ok(audio) => return Ok(audio),
+                Err(e) => e,
+            };
+            // A cloud failure (daily quota 429, network) would leave the
+            // assistant mute: speak this utterance with the local voice instead.
+            let Some(engine) = self.local_engine_for("en").await else {
+                return Err(err);
+            };
+            tracing::warn!(
+                target: "fono_tts::english_only_fallback",
+                primary = self.primary.name(), error = %format!("{err:#}"),
+                "cloud TTS failed; speaking this utterance with the local voice",
+            );
+            return engine.synthesize(text, None, None).await;
         };
         if let Some(engine) = self.local_engine_for(&base).await {
             tracing::debug!(
@@ -318,6 +332,33 @@ mod tests {
             "English-only cloud backend must NOT be fed non-English text",
         );
         assert!(audio.pcm.is_empty(), "with no local engine the utterance is skipped (empty PCM)");
+    }
+
+    struct FailingPrimary;
+
+    #[async_trait]
+    impl TextToSpeech for FailingPrimary {
+        async fn synthesize(&self, _: &str, _: Option<&str>, _: Option<&str>) -> Result<TtsAudio> {
+            Err(anyhow::anyhow!("groq TTS returned 429 Too Many Requests"))
+        }
+        fn name(&self) -> &'static str {
+            "failing-cloud"
+        }
+        fn native_sample_rate(&self) -> u32 {
+            24_000
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_error_without_local_voice_is_reported_not_swallowed() {
+        let w = EnglishOnlyFallback::new(
+            Arc::new(FailingPrimary),
+            std::env::temp_dir().join("fono-english-only-fallback-test-fail"),
+            Some("http://127.0.0.1:1/never".to_string()),
+            &langs(&["en"]),
+        );
+        let err = w.synthesize("Very good, sir.", None, Some("en")).await.unwrap_err();
+        assert!(format!("{err:#}").contains("429"), "{err:#}");
     }
 
     #[tokio::test]
