@@ -1370,6 +1370,12 @@ pub struct Assistant {
     /// database (see `fono_core::tool_catalog`).
     #[serde(default)]
     pub tools: AssistantTools,
+    /// Languages the assistant answers. Speech the recogniser places in
+    /// another `[general].languages` entry is heard and dropped, so a
+    /// conversation in the room in another language never gets a reply.
+    /// Empty (the default) answers every language.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub answer_languages: Vec<String>,
 }
 
 /// `[assistant.tools]` — voice-triggered actions.
@@ -1526,6 +1532,7 @@ impl Default for Assistant {
             prefer_web_search: false,
             realtime: AssistantRealtime::default(),
             tools: AssistantTools::default(),
+            answer_languages: Vec::new(),
         }
     }
 }

@@ -3545,6 +3545,7 @@ impl SessionOrchestrator {
             active_window_context,
             trim_silence: cfg.audio.trim_silence,
             vocabulary: self.load_vocabulary(),
+            answer_languages: cfg.assistant.answer_languages.clone(),
         };
         let state_for_task = self.assistant_session.clone();
         let notify_for_task = notify.clone();

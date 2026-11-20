@@ -233,6 +233,7 @@ impl TurnDriver {
             // the very sentence the fixture is measuring.
             trim_silence: false,
             vocabulary: fono_core::correction::VocabularyTable::default(),
+            answer_languages: Vec::new(),
         };
 
         let notify = Arc::new(Notify::new());

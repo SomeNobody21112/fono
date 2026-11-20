@@ -358,6 +358,8 @@ pub struct AssistantTurnInputs {
     /// and, for backends that accept them, sent ahead as recognition
     /// hints so there is less left to correct.
     pub vocabulary: fono_core::correction::VocabularyTable,
+    /// `[assistant].answer_languages`: empty answers everything.
+    pub answer_languages: Vec<String>,
 }
 
 /// Inputs for [`run_realtime_turn`] — the speech-to-speech (Gemini
@@ -421,6 +423,13 @@ struct RealtimeReply {
 /// regardless. Returns `Ok(true)` if anything was actually played,
 /// `Ok(false)` on early-out (empty STT, abort).
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
+/// Whether a turn in `detected` gets an answer. An undetected language is
+/// answered: the recogniser leaves it unset on low confidence, which is
+/// usually short or accented speech in an answered language.
+fn answers_language(answer: &[String], detected: Option<&str>) -> bool {
+    answer.is_empty() || detected.is_none_or(|l| answer.iter().any(|a| a.eq_ignore_ascii_case(l)))
+}
+
 pub async fn run_assistant_turn(
     state: Arc<Mutex<AssistantSessionState>>,
     inputs: AssistantTurnInputs,
@@ -447,6 +456,7 @@ pub async fn run_assistant_turn(
         active_window_context,
         trim_silence,
         vocabulary,
+        answer_languages,
     } = inputs;
 
     // Turn-wide metrics. Populated as the pump progresses; emitted
@@ -665,6 +675,16 @@ pub async fn run_assistant_turn(
             stt_ms,
             "STT: {trimmed:?}"
         );
+        if !answers_language(&answer_languages, transcription.language.as_deref()) {
+            info!(
+                "assistant: heard {:?}, not one of {answer_languages:?}; not answering",
+                transcription.language.as_deref().unwrap_or("?")
+            );
+            if let Some(t) = &trace {
+                t.finish(json!({ "aborted": true, "reason": "language_not_answered" }));
+            }
+            return Ok(false);
+        }
         trimmed
     };
     metrics.user_chars = user_text.chars().count();
@@ -3251,6 +3271,16 @@ fn notify_triggered(_notify: &Arc<Notify>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn answers_only_listed_languages() {
+        let en = vec!["en".to_string()];
+        assert!(super::answers_language(&[], Some("ta")));
+        assert!(super::answers_language(&en, Some("en")));
+        assert!(super::answers_language(&en, None));
+        assert!(!super::answers_language(&en, Some("ta")));
+        assert!(!super::answers_language(&en, Some("hi")));
+    }
+
     use super::{classify_tool_outcome, extract_json_message, read_dwell, truncate};
     use crate::session::AssistantToolOutcome;
 
